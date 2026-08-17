@@ -1,0 +1,14 @@
+{
+  "name": "telinha-server",
+  "version": "1.0.0",
+  "description": "Servidor de sinalização do Telinha — compartilhamento de tela entre amigos",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "ws": "^8.18.0"
+  }
+}
