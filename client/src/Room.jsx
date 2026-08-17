@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import StreamTile from './StreamTile.jsx'
 
-const ICE_SERVERS = [
+const ICE_FALLBACK = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
 ]
 
 export default function Room({ name, roomCode, onLeave }) {
+  const iceServersRef = useRef(ICE_FALLBACK)
   const wsRef = useRef(null)
   const myIdRef = useRef(null)
   const sendPCs = useRef(new Map()) // viewerId -> RTCPeerConnection (quando EU compartilho)
@@ -20,6 +21,7 @@ export default function Room({ name, roomCode, onLeave }) {
   const [peers, setPeers] = useState({}) // id -> { name, sharing }
   const [remoteStreams, setRemoteStreams] = useState({}) // sharerId -> MediaStream
   const [myStream, setMyStream] = useState(null)
+  const [connStates, setConnStates] = useState({}) // sharerId -> RTCPeerConnectionState
   const [focusId, setFocusId] = useState(null) // tile em destaque
   const [copied, setCopied] = useState(false)
 
@@ -35,7 +37,7 @@ export default function Room({ name, roomCode, onLeave }) {
     async (viewerId) => {
       const stream = myStreamRef.current
       if (!stream) return
-      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS })
+      const pc = new RTCPeerConnection({ iceServers: iceServersRef.current })
       sendPCs.current.set(viewerId, pc)
       for (const track of stream.getTracks()) pc.addTrack(track, stream)
       // por padrão o WebRTC limita o vídeo a ~2,5 Mbps, o que embaça a tela;
@@ -106,9 +108,11 @@ export default function Room({ name, roomCode, onLeave }) {
     (sharerId) => {
       let entry = recvPCs.current.get(sharerId)
       if (entry) return entry
-      const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS })
+      const pc = new RTCPeerConnection({ iceServers: iceServersRef.current })
       entry = { pc, pending: [] }
       recvPCs.current.set(sharerId, entry)
+      pc.onconnectionstatechange = () =>
+        setConnStates((cur) => ({ ...cur, [sharerId]: pc.connectionState }))
       pc.onicecandidate = (e) => {
         if (e.candidate) signal(sharerId, `share:${sharerId}`, { candidate: e.candidate })
       }
@@ -128,6 +132,10 @@ export default function Room({ name, roomCode, onLeave }) {
       recvPCs.current.delete(sharerId)
     }
     setRemoteStreams((cur) => {
+      const { [sharerId]: _gone, ...rest } = cur
+      return rest
+    })
+    setConnStates((cur) => {
       const { [sharerId]: _gone, ...rest } = cur
       return rest
     })
@@ -177,11 +185,25 @@ export default function Room({ name, roomCode, onLeave }) {
 
   // ---------- conexão WebSocket ----------
   useEffect(() => {
-    const proto = window.location.protocol === 'https:' ? 'wss://' : 'ws://'
-    const ws = new WebSocket(`${proto}${window.location.host}/ws`)
-    wsRef.current = ws
+    let ws = null
+    let cancelled = false
 
-    ws.onopen = () => {
+    ;(async () => {
+      // busca a lista de servidores STUN/TURN do backend antes de entrar
+      try {
+        const r = await fetch('/ice')
+        const data = await r.json()
+        if (data.iceServers?.length) iceServersRef.current = data.iceServers
+      } catch {
+        /* segue com o fallback STUN */
+      }
+      if (cancelled) return
+
+      const proto = window.location.protocol === 'https:' ? 'wss://' : 'ws://'
+      ws = new WebSocket(`${proto}${window.location.host}/ws`)
+      wsRef.current = ws
+
+      ws.onopen = () => {
       if (roomCode) ws.send(JSON.stringify({ type: 'join', room: roomCode, name }))
       else ws.send(JSON.stringify({ type: 'create-room' }))
     }
@@ -244,8 +266,10 @@ export default function Room({ name, roomCode, onLeave }) {
     ws.onclose = () => {
       setStatus((s) => (s === 'joined' ? 'closed' : s))
     }
+    })()
 
     return () => {
+      cancelled = true
       for (const pc of sendPCs.current.values()) pc.close()
       sendPCs.current.clear()
       for (const { pc } of recvPCs.current.values()) pc.close()
@@ -253,7 +277,7 @@ export default function Room({ name, roomCode, onLeave }) {
       myStreamRef.current?.getTracks().forEach((t) => t.stop())
       myStreamRef.current = null
       sharingRef.current = false
-      ws.close()
+      ws?.close()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -342,6 +366,7 @@ export default function Room({ name, roomCode, onLeave }) {
               <StreamTile
                 key={t.id}
                 tile={t}
+                connState={t.mine ? 'connected' : connStates[t.id] || 'connecting'}
                 focused={focusId === t.id}
                 onFocusToggle={() => setFocusId((f) => (f === t.id ? null : t.id))}
               />

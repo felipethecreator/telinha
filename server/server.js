@@ -15,6 +15,61 @@ const MAX_PEERS_POR_SALA = 8;
 const app = express();
 app.use(express.static(path.join(__dirname, "public")));
 
+// Servidores ICE (STUN/TURN) que o frontend deve usar.
+// STUN é grátis e resolve a maioria dos casos; TURN é o retransmissor
+// usado quando o P2P direto falha (CGNAT, 5G etc.) — configure por env vars:
+//   CF_TURN_KEY_ID + CF_TURN_API_TOKEN  -> TURN da Cloudflare (recomendado, ~1TB/mês grátis)
+//   TURN_URL + TURN_USERNAME + TURN_CREDENTIAL -> qualquer outro provedor (ex.: Metered)
+const STUN_FALLBACK = [
+  { urls: "stun:stun.l.google.com:19302" },
+  { urls: "stun:stun1.l.google.com:19302" },
+];
+
+app.get("/ice", async (_req, res) => {
+  const { CF_TURN_KEY_ID, CF_TURN_API_TOKEN, TURN_URL, TURN_USERNAME, TURN_CREDENTIAL } =
+    process.env;
+  try {
+    if (CF_TURN_KEY_ID && CF_TURN_API_TOKEN) {
+      // gera credenciais temporárias (24h) na Cloudflare
+      const endpoints = [
+        `https://rtc.live.cloudflare.com/v1/turn/keys/${CF_TURN_KEY_ID}/credentials/generate-ice-servers`,
+        `https://rtc.live.cloudflare.com/v1/turn/keys/${CF_TURN_KEY_ID}/credentials/generate`,
+      ];
+      for (const url of endpoints) {
+        const r = await fetch(url, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${CF_TURN_API_TOKEN}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ ttl: 86400 }),
+        });
+        if (r.ok) {
+          const data = await r.json();
+          const servers = Array.isArray(data.iceServers) ? data.iceServers : [data.iceServers];
+          return res.json({ iceServers: [...STUN_FALLBACK, ...servers] });
+        }
+      }
+      console.warn("TURN da Cloudflare indisponível — caindo pro fallback");
+    }
+    if (TURN_URL && TURN_USERNAME && TURN_CREDENTIAL) {
+      return res.json({
+        iceServers: [
+          ...STUN_FALLBACK,
+          {
+            urls: TURN_URL.split(",").map((s) => s.trim()),
+            username: TURN_USERNAME,
+            credential: TURN_CREDENTIAL,
+          },
+        ],
+      });
+    }
+  } catch (err) {
+    console.warn("erro montando /ice:", err.message);
+  }
+  res.json({ iceServers: STUN_FALLBACK });
+});
+
 // SPA fallback: qualquer rota /sala/XXXX serve o index
 app.get("/sala/:code", (_req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));

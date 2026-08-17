@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 
-export default function StreamTile({ tile, focused, onFocusToggle }) {
+const CONN_MSG = {
+  connecting: '⏳ Conectando…',
+  new: '⏳ Conectando…',
+  disconnected: '📡 Conexão instável, tentando recuperar…',
+  failed: '😕 Não deu pra conectar — a rede de quem transmite (ou a sua) está bloqueando o P2P. Um servidor TURN resolve isso.',
+}
+
+export default function StreamTile({ tile, connState, focused, onFocusToggle }) {
   const videoRef = useRef(null)
   const [needsClick, setNeedsClick] = useState(false)
   const [muted, setMuted] = useState(tile.mine) // sua própria tela fica muda (evita eco)
@@ -26,7 +33,12 @@ export default function StreamTile({ tile, focused, onFocusToggle }) {
   return (
     <div className={`tile ${focused ? 'focused' : ''}`} onClick={needsClick ? unlock : onFocusToggle}>
       <video ref={videoRef} autoPlay playsInline muted={muted} />
-      {needsClick && (
+      {CONN_MSG[connState] && (
+        <div className="tile-overlay conn">
+          <span>{CONN_MSG[connState]}</span>
+        </div>
+      )}
+      {needsClick && !CONN_MSG[connState] && (
         <div className="tile-overlay">
           <span>▶ Clique para assistir</span>
         </div>

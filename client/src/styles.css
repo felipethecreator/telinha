@@ -315,6 +315,14 @@ input:focus { border-color: var(--accent); }
   font-size: 18px;
 }
 
+.tile-overlay.conn {
+  padding: 24px;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
 .tile-bar {
   position: absolute;
   left: 0;
