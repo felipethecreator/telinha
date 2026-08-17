@@ -500,6 +500,8 @@ input:focus { border-color: var(--accent); }
 .uso-col:hover .uso-col-bar { filter: brightness(1.25); }
 
 .uso-col-label {
+  position: absolute;
+  top: -4px;
   font-size: 11.5px;
   font-weight: 700;
   color: var(--text);
@@ -540,3 +542,6 @@ input:focus { border-color: var(--accent); }
 
 .uso-link { color: var(--accent-2); text-decoration: none; }
 .uso-link:hover { text-decoration: underline; }
+
+.uso-bloco { display: flex; flex-direction: column; gap: 14px; }
+.uso-bloco .uso-h2 { margin: 0; }

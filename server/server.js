@@ -68,6 +68,43 @@ async function consultaUsoTurn() {
   return { totalGB: dias.reduce((s, d) => s + d.gb, 0), dias, inicio };
 }
 
+// consumo da VM Oracle (vnstat exposto pelo setup-stats.sh na porta 9091)
+async function consultaUsoOracle() {
+  const now = new Date();
+  if (process.env.USO_MOCK) {
+    const dias = Array.from({ length: 17 }, (_, i) => ({
+      date: `${now.toISOString().slice(0, 8)}${String(i + 1).padStart(2, "0")}`,
+      gb: Math.round((Math.cos(i / 4) ** 2 * 30 + 5) * 10) / 10,
+    }));
+    return { totalGB: dias.reduce((s, d) => s + d.gb, 0), dias, gratisGB: 10000 };
+  }
+  if (!COTURN_HOST || !COTURN_SECRET) return null;
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 5000);
+  try {
+    const r = await fetch(
+      `http://${COTURN_HOST}:9091/?token=${encodeURIComponent(COTURN_SECRET)}`,
+      { signal: ctl.signal },
+    );
+    if (!r.ok) return null;
+    const data = await r.json();
+    const registros = data?.interfaces?.[0]?.traffic?.day || [];
+    const dias = registros
+      .filter((d) => d.date.year === now.getUTCFullYear() && d.date.month === now.getUTCMonth() + 1)
+      .map((d) => ({
+        date: `${d.date.year}-${String(d.date.month).padStart(2, "0")}-${String(d.date.day).padStart(2, "0")}`,
+        gb: (d.rx + d.tx) / 1e9,
+      }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+    return { totalGB: dias.reduce((s, d) => s + d.gb, 0), dias, gratisGB: 10000 };
+  } catch (err) {
+    console.warn("não deu pra consultar o consumo da VM Oracle:", err.message);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // guarda: se o consumo do mês passar do limite, o /ice para de entregar TURN
 // (o P2P direto continua funcionando; só o relay desliga até virar o mês)
 let usoCache = { at: 0, totalGB: 0, valido: false };
@@ -234,22 +271,30 @@ app.get("/api/uso/dados", async (req, res) => {
     usoSessoes.delete(token);
     return res.status(401).json({ error: "Sessão expirada — faz login de novo." });
   }
-  if (!process.env.USO_MOCK && (!process.env.CF_ACCOUNT_ID || !process.env.CF_ANALYTICS_TOKEN)) {
+  let cloudflare = null;
+  let erroCf = null;
+  if (process.env.USO_MOCK || (process.env.CF_ACCOUNT_ID && process.env.CF_ANALYTICS_TOKEN)) {
+    try {
+      const uso = await consultaUsoTurn();
+      cloudflare = {
+        ...uso,
+        gratisGB: 1000,
+        limiteGB: TURN_LIMITE_GB,
+        turnAtivo: uso.totalGB < TURN_LIMITE_GB,
+      };
+    } catch (err) {
+      erroCf = err.message;
+    }
+  }
+  const oracle = await consultaUsoOracle();
+  if (!cloudflare && !oracle) {
     return res.status(503).json({
-      error: "Falta configurar CF_ACCOUNT_ID e CF_ANALYTICS_TOKEN no servidor pra consultar o consumo.",
+      error: erroCf
+        ? `Erro consultando a Cloudflare: ${erroCf}`
+        : "Nenhuma fonte de consumo configurada (Cloudflare ou VM Oracle).",
     });
   }
-  try {
-    const uso = await consultaUsoTurn();
-    res.json({
-      ...uso,
-      limiteGB: TURN_LIMITE_GB,
-      gratisGB: 1000,
-      turnAtivo: uso.totalGB < TURN_LIMITE_GB,
-    });
-  } catch (err) {
-    res.status(502).json({ error: `Erro consultando a Cloudflare: ${err.message}` });
-  }
+  res.json({ cloudflare, oracle });
 });
 
 const httpServer = createServer(app);
