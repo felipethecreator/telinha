@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import Home from './Home.jsx'
 import Room from './Room.jsx'
+import Uso from './Uso.jsx'
 
 function codeFromUrl() {
   const m = window.location.pathname.match(/^\/sala\/([A-Za-z0-9]{4,10})/)
@@ -12,6 +13,9 @@ export default function App() {
   const [session, setSession] = useState(null)
   const [urlCode] = useState(codeFromUrl)
 
+  if (window.location.pathname.startsWith('/uso')) {
+    return <Uso />
+  }
   if (!session) {
     return <Home initialCode={urlCode} onEnter={(name, roomCode) => setSession({ name, roomCode })} />
   }

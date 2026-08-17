@@ -13,7 +13,76 @@ const PORT = process.env.PORT || 3000;
 const MAX_PEERS_POR_SALA = 8;
 
 const app = express();
+app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
+
+// ---------- consumo do TURN (Cloudflare GraphQL) ----------
+// Env vars: CF_ACCOUNT_ID (ID da conta) + CF_ANALYTICS_TOKEN (token com Account Analytics: Read)
+const TURN_LIMITE_GB = Number(process.env.TURN_LIMITE_GB || 950);
+
+async function consultaUsoTurn() {
+  const now = new Date();
+  const inicio = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
+    .toISOString()
+    .slice(0, 10);
+  if (process.env.USO_MOCK) {
+    // dados de demonstração (pra testar a página sem a Cloudflare configurada)
+    const dias = Array.from({ length: 17 }, (_, i) => ({
+      date: `${inicio.slice(0, 8)}${String(i + 1).padStart(2, "0")}`,
+      gb: Math.round((Math.sin(i / 3) ** 2 * 9 + 1.5) * 10) / 10,
+    }));
+    return { totalGB: dias.reduce((s, d) => s + d.gb, 0), dias, inicio };
+  }
+  const query = `
+    query($accountTag: string!, $inicio: Date!) {
+      viewer {
+        accounts(filter: { accountTag: $accountTag }) {
+          callsTurnUsageAdaptiveGroups(filter: { date_geq: $inicio }, limit: 1000) {
+            dimensions { date }
+            sum { egressBytes ingressBytes }
+          }
+        }
+      }
+    }`;
+  const r = await fetch("https://api.cloudflare.com/client/v4/graphql", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.CF_ANALYTICS_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      query,
+      variables: { accountTag: process.env.CF_ACCOUNT_ID, inicio },
+    }),
+  });
+  const data = await r.json();
+  if (data.errors?.length) throw new Error(data.errors[0].message);
+  const grupos = data?.data?.viewer?.accounts?.[0]?.callsTurnUsageAdaptiveGroups || [];
+  const dias = grupos
+    .map((g) => ({
+      date: g.dimensions.date,
+      gb: (g.sum.egressBytes + g.sum.ingressBytes) / 1e9,
+    }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+  return { totalGB: dias.reduce((s, d) => s + d.gb, 0), dias, inicio };
+}
+
+// guarda: se o consumo do mês passar do limite, o /ice para de entregar TURN
+// (o P2P direto continua funcionando; só o relay desliga até virar o mês)
+let usoCache = { at: 0, totalGB: 0, valido: false };
+async function turnDentroDoLimite() {
+  if (!process.env.CF_ACCOUNT_ID || !process.env.CF_ANALYTICS_TOKEN) return true;
+  if (Date.now() - usoCache.at > 15 * 60_000) {
+    try {
+      const { totalGB } = await consultaUsoTurn();
+      usoCache = { at: Date.now(), totalGB, valido: true };
+    } catch (err) {
+      console.warn("não deu pra checar o uso do TURN:", err.message);
+      usoCache = { ...usoCache, at: Date.now(), valido: usoCache.valido };
+    }
+  }
+  return !usoCache.valido || usoCache.totalGB < TURN_LIMITE_GB;
+}
 
 // Servidores ICE (STUN/TURN) que o frontend deve usar.
 // STUN é grátis e resolve a maioria dos casos; TURN é o retransmissor
@@ -30,7 +99,12 @@ app.get("/ice", async (_req, res) => {
     process.env;
   try {
     if (CF_TURN_KEY_ID && CF_TURN_API_TOKEN) {
-      // gera credenciais temporárias (24h) na Cloudflare
+      // trava de custo: estourou o limite do mês? só STUN até virar o mês
+      if (!(await turnDentroDoLimite())) {
+        console.warn(`TURN pausado: consumo do mês passou de ${TURN_LIMITE_GB}GB`);
+        return res.json({ iceServers: STUN_FALLBACK, turnPausado: true });
+      }
+      // gera credenciais temporárias (6h) na Cloudflare
       const endpoints = [
         `https://rtc.live.cloudflare.com/v1/turn/keys/${CF_TURN_KEY_ID}/credentials/generate-ice-servers`,
         `https://rtc.live.cloudflare.com/v1/turn/keys/${CF_TURN_KEY_ID}/credentials/generate`,
@@ -42,7 +116,7 @@ app.get("/ice", async (_req, res) => {
             Authorization: `Bearer ${CF_TURN_API_TOKEN}`,
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ ttl: 86400 }),
+          body: JSON.stringify({ ttl: 21600 }), // 6h: se o limite estourar, o relay morre em poucas horas
         });
         if (r.ok) {
           const data = await r.json();
@@ -73,6 +147,60 @@ app.get("/ice", async (_req, res) => {
 // SPA fallback: qualquer rota /sala/XXXX serve o index
 app.get("/sala/:code", (_req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
+});
+
+// ---------- página /uso (protegida por login via env vars USO_USER/USO_PASS) ----------
+app.get("/uso", (_req, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
+});
+
+const usoSessoes = new Map(); // token -> expira em (12h)
+const loginErros = new Map(); // ip -> { count, ate }
+
+app.post("/api/uso/login", (req, res) => {
+  const { USO_USER, USO_PASS } = process.env;
+  if (!USO_USER || !USO_PASS) {
+    return res.status(503).json({ error: "Login não configurado (defina USO_USER e USO_PASS no servidor)." });
+  }
+  const ip = req.headers["x-forwarded-for"]?.split(",")[0] || req.socket.remoteAddress;
+  const erros = loginErros.get(ip);
+  if (erros && erros.count >= 5 && Date.now() < erros.ate) {
+    return res.status(429).json({ error: "Muitas tentativas — espera 1 minuto." });
+  }
+  const { user, pass } = req.body || {};
+  if (user === USO_USER && pass === USO_PASS) {
+    loginErros.delete(ip);
+    const token = crypto.randomUUID();
+    usoSessoes.set(token, Date.now() + 12 * 3600e3);
+    return res.json({ token });
+  }
+  loginErros.set(ip, { count: (erros?.count || 0) + 1, ate: Date.now() + 60e3 });
+  res.status(401).json({ error: "Usuário ou senha errados." });
+});
+
+app.get("/api/uso/dados", async (req, res) => {
+  const token = (req.headers.authorization || "").replace("Bearer ", "");
+  const expira = usoSessoes.get(token);
+  if (!expira || Date.now() > expira) {
+    usoSessoes.delete(token);
+    return res.status(401).json({ error: "Sessão expirada — faz login de novo." });
+  }
+  if (!process.env.USO_MOCK && (!process.env.CF_ACCOUNT_ID || !process.env.CF_ANALYTICS_TOKEN)) {
+    return res.status(503).json({
+      error: "Falta configurar CF_ACCOUNT_ID e CF_ANALYTICS_TOKEN no servidor pra consultar o consumo.",
+    });
+  }
+  try {
+    const uso = await consultaUsoTurn();
+    res.json({
+      ...uso,
+      limiteGB: TURN_LIMITE_GB,
+      gratisGB: 1000,
+      turnAtivo: uso.totalGB < TURN_LIMITE_GB,
+    });
+  } catch (err) {
+    res.status(502).json({ error: `Erro consultando a Cloudflare: ${err.message}` });
+  }
 });
 
 const httpServer = createServer(app);
