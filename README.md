@@ -73,6 +73,16 @@ npm run build   # gera o build direto em server/public
 - Mais de uma pessoa pode transmitir **ao mesmo tempo**.
 - O link da sala (`/sala/CÓDIGO`) pode ser mandado direto no grupo — quem clicar já cai na tela de entrada com o código preenchido.
 
+## Relay próprio (coturn na Oracle)
+
+O `/ice` entrega relays nesta ordem: **coturn próprio** (se `COTURN_HOST` + `COTURN_SECRET` estiverem configurados e a VM responder ao health check) → **Cloudflare TURN** (fallback) → só STUN. Pra subir o coturn numa VM Ubuntu (ex.: always free da Oracle, 10 TB/mês):
+
+```bash
+sudo bash setup-coturn.sh
+```
+
+O script instala tudo, gera o segredo e imprime as variáveis pra colar no Render. Não esquece de abrir UDP/TCP 3478 e UDP 49152-65535 também na Security List da Oracle.
+
 ## Limitações (e como resolver se aparecerem)
 
 - **Até ~5 pessoas por sala**: como é P2P, quem transmite envia uma cópia do vídeo pra cada espectador. Com internet residencial, 4 espectadores é o limite confortável. Pra mais gente, o caminho é trocar o mesh por um SFU (LiveKit é a rota mais fácil).

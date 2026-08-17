@@ -2,6 +2,7 @@
 // Só apresenta os navegadores uns aos outros; o vídeo vai direto P2P.
 
 import express from "express";
+import net from "net";
 import { createServer } from "http";
 import { WebSocketServer } from "ws";
 import { fileURLToPath } from "url";
@@ -94,10 +95,58 @@ const STUN_FALLBACK = [
   { urls: "stun:stun1.l.google.com:19302" },
 ];
 
+// ---------- coturn próprio (relay principal) ----------
+// Env vars: COTURN_HOST (IP/domínio da sua VM) + COTURN_SECRET (gerado pelo setup-coturn.sh)
+// Se o coturn estiver de pé, ele é o relay entregue; a Cloudflare vira fallback.
+const COTURN_HOST = process.env.COTURN_HOST;
+const COTURN_SECRET = process.env.COTURN_SECRET;
+const COTURN_PORT = Number(process.env.COTURN_PORT || 3478);
+
+let coturnCache = { at: 0, ok: false };
+function coturnSaudavel() {
+  return new Promise((resolve) => {
+    if (!COTURN_HOST || !COTURN_SECRET) return resolve(false);
+    if (Date.now() - coturnCache.at < 5 * 60_000) return resolve(coturnCache.ok);
+    const sock = net.connect({ host: COTURN_HOST, port: COTURN_PORT, timeout: 3000 });
+    let respondido = false;
+    const done = (ok) => {
+      if (respondido) return;
+      respondido = true;
+      coturnCache = { at: Date.now(), ok };
+      if (!ok) console.warn("coturn fora do ar — usando o fallback (Cloudflare)");
+      sock.destroy();
+      resolve(ok);
+    };
+    sock.on("connect", () => done(true));
+    sock.on("timeout", () => done(false));
+    sock.on("error", () => done(false));
+  });
+}
+
+// credenciais temporárias (REST auth do coturn): usuário = timestamp de expiração,
+// senha = HMAC-SHA1 do usuário com o segredo compartilhado
+function credenciaisCoturn() {
+  const usuario = `${Math.floor(Date.now() / 1000) + 21600}:telinha`; // vale 6h
+  const senha = crypto.createHmac("sha1", COTURN_SECRET).update(usuario).digest("base64");
+  return {
+    urls: [
+      `turn:${COTURN_HOST}:${COTURN_PORT}?transport=udp`,
+      `turn:${COTURN_HOST}:${COTURN_PORT}?transport=tcp`,
+    ],
+    username: usuario,
+    credential: senha,
+  };
+}
+
 app.get("/ice", async (_req, res) => {
   const { CF_TURN_KEY_ID, CF_TURN_API_TOKEN, TURN_URL, TURN_USERNAME, TURN_CREDENTIAL } =
     process.env;
   try {
+    // 1º: coturn próprio (Oracle) — de graça até 10TB/mês
+    if (await coturnSaudavel()) {
+      return res.json({ iceServers: [...STUN_FALLBACK, credenciaisCoturn()], relay: "coturn" });
+    }
+    // 2º: Cloudflare (fallback se o coturn estiver fora)
     if (CF_TURN_KEY_ID && CF_TURN_API_TOKEN) {
       // trava de custo: estourou o limite do mês? só STUN até virar o mês
       if (!(await turnDentroDoLimite())) {
