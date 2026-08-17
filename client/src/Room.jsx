@@ -6,6 +6,48 @@ const ICE_FALLBACK = [
   { urls: 'stun:stun1.l.google.com:19302' },
 ]
 
+const BITRATE_DIRETO = 8_000_000 // P2P direto: qualidade máxima
+const BITRATE_RELAY = 4_000_000 // via TURN: economiza a cota grátis (1TB/mês)
+
+async function setMaxBitrate(pc, bitrate) {
+  const sender = pc.getSenders().find((s) => s.track?.kind === 'video')
+  if (!sender) return
+  const params = sender.getParameters()
+  if (!params.encodings?.length) params.encodings = [{}]
+  params.encodings[0].maxBitrate = bitrate
+  params.encodings[0].maxFramerate = 60
+  await sender.setParameters(params)
+}
+
+// Se a conexão estiver passando pelo relay (TURN), baixa o teto de bitrate
+// pra não estourar a cota gratuita da Cloudflare.
+async function capBitrateIfRelayed(pc) {
+  try {
+    const stats = await pc.getStats()
+    let selectedPairId = null
+    const pairs = new Map()
+    const candidates = new Map()
+    stats.forEach((r) => {
+      if (r.type === 'transport' && r.selectedCandidatePairId)
+        selectedPairId = r.selectedCandidatePairId
+      if (r.type === 'candidate-pair') pairs.set(r.id, r)
+      if (r.type === 'local-candidate' || r.type === 'remote-candidate') candidates.set(r.id, r)
+    })
+    const pair =
+      (selectedPairId && pairs.get(selectedPairId)) ||
+      [...pairs.values()].find((p) => p.nominated && p.state === 'succeeded')
+    if (!pair) return
+    const local = candidates.get(pair.localCandidateId)
+    const remote = candidates.get(pair.remoteCandidateId)
+    if (local?.candidateType === 'relay' || remote?.candidateType === 'relay') {
+      await setMaxBitrate(pc, BITRATE_RELAY)
+      console.log('Telinha: conexão via relay (TURN) — bitrate limitado a 4 Mbps pra poupar a cota')
+    }
+  } catch {
+    /* sem stats, segue o jogo */
+  }
+}
+
 export default function Room({ name, roomCode, onLeave }) {
   const iceServersRef = useRef(ICE_FALLBACK)
   const wsRef = useRef(null)
@@ -42,17 +84,14 @@ export default function Room({ name, roomCode, onLeave }) {
       for (const track of stream.getTracks()) pc.addTrack(track, stream)
       // por padrão o WebRTC limita o vídeo a ~2,5 Mbps, o que embaça a tela;
       // aqui liberamos até 8 Mbps e 60fps pra ficar nítido pra quem assiste
-      const videoSender = pc.getSenders().find((s) => s.track?.kind === 'video')
-      if (videoSender) {
-        try {
-          const params = videoSender.getParameters()
-          if (!params.encodings?.length) params.encodings = [{}]
-          params.encodings[0].maxBitrate = 8_000_000
-          params.encodings[0].maxFramerate = 60
-          await videoSender.setParameters(params)
-        } catch (err) {
-          console.warn('não deu pra ajustar o bitrate:', err)
-        }
+      try {
+        await setMaxBitrate(pc, BITRATE_DIRETO)
+      } catch (err) {
+        console.warn('não deu pra ajustar o bitrate:', err)
+      }
+      pc.onconnectionstatechange = () => {
+        // quando conectar, verifica se caiu no relay e ajusta o teto
+        if (pc.connectionState === 'connected') capBitrateIfRelayed(pc)
       }
       pc.onicecandidate = (e) => {
         if (e.candidate) signal(viewerId, `share:${myIdRef.current}`, { candidate: e.candidate })
