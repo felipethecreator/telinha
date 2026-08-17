@@ -38,6 +38,20 @@ export default function Room({ name, roomCode, onLeave }) {
       const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS })
       sendPCs.current.set(viewerId, pc)
       for (const track of stream.getTracks()) pc.addTrack(track, stream)
+      // por padrão o WebRTC limita o vídeo a ~2,5 Mbps, o que embaça a tela;
+      // aqui liberamos até 8 Mbps e 60fps pra ficar nítido pra quem assiste
+      const videoSender = pc.getSenders().find((s) => s.track?.kind === 'video')
+      if (videoSender) {
+        try {
+          const params = videoSender.getParameters()
+          if (!params.encodings?.length) params.encodings = [{}]
+          params.encodings[0].maxBitrate = 8_000_000
+          params.encodings[0].maxFramerate = 60
+          await videoSender.setParameters(params)
+        } catch (err) {
+          console.warn('não deu pra ajustar o bitrate:', err)
+        }
+      }
       pc.onicecandidate = (e) => {
         if (e.candidate) signal(viewerId, `share:${myIdRef.current}`, { candidate: e.candidate })
       }
