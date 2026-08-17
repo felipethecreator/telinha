@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import StreamTile from './StreamTile.jsx'
+import { IconScreen, IconStop, IconExit, IconLink, IconJoin, IconLeave } from './icons.jsx'
+
+const CORES_PLAYER = ['p1', 'p2', 'p3', 'p4', 'p5'] // vermelho, azul, amarelo, verde, magenta
 
 const ICE_FALLBACK = [
   { urls: 'stun:stun.l.google.com:19302' },
@@ -8,6 +11,33 @@ const ICE_FALLBACK = [
 
 const BITRATE_DIRETO = 8_000_000 // P2P direto: qualidade máxima
 const BITRATE_RELAY = 4_000_000 // via TURN: economiza a cota grátis (1TB/mês)
+
+// ---------- sons de aviso (gerados na hora, sem arquivo) ----------
+let audioCtx = null
+function toca(notas) {
+  try {
+    audioCtx ||= new (window.AudioContext || window.webkitAudioContext)()
+    if (audioCtx.state === 'suspended') audioCtx.resume()
+    for (const [freq, inicio, dur] of notas) {
+      const osc = audioCtx.createOscillator()
+      const gain = audioCtx.createGain()
+      osc.type = 'sine'
+      osc.frequency.value = freq
+      const t = audioCtx.currentTime + inicio
+      gain.gain.setValueAtTime(0.0001, t)
+      gain.gain.exponentialRampToValueAtTime(0.1, t + 0.02)
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + dur)
+      osc.connect(gain).connect(audioCtx.destination)
+      osc.start(t)
+      osc.stop(t + dur + 0.05)
+    }
+  } catch {
+    /* sem áudio, sem drama */
+  }
+}
+const somEntrada = () => toca([[523, 0, 0.18], [784, 0.12, 0.22]]) // dó -> sol (subindo)
+const somSaida = () => toca([[659, 0, 0.18], [392, 0.12, 0.25]]) // descendo
+const somTransmitindo = () => toca([[880, 0, 0.12], [1175, 0.1, 0.18]]) // pling agudo
 
 async function setMaxBitrate(pc, bitrate) {
   const sender = pc.getSenders().find((s) => s.track?.kind === 'video')
@@ -66,6 +96,19 @@ export default function Room({ name, roomCode, onLeave }) {
   const [connStates, setConnStates] = useState({}) // sharerId -> RTCPeerConnectionState
   const [focusId, setFocusId] = useState(null) // tile em destaque
   const [copied, setCopied] = useState(false)
+  const [toasts, setToasts] = useState([])
+  const toastSeq = useRef(0)
+  const peersRef = useRef({})
+
+  useEffect(() => {
+    peersRef.current = peers
+  }, [peers])
+
+  const toast = useCallback((tipo, texto) => {
+    const id = ++toastSeq.current
+    setToasts((cur) => [...cur, { id, tipo, texto }])
+    setTimeout(() => setToasts((cur) => cur.filter((t) => t.id !== id)), 4000)
+  }, [])
 
   const signal = useCallback((to, channel, data) => {
     const ws = wsRef.current
@@ -266,8 +309,15 @@ export default function Room({ name, roomCode, onLeave }) {
         case 'peer-joined':
           setPeers((cur) => ({ ...cur, [msg.id]: { name: msg.name, sharing: false } }))
           if (sharingRef.current) createSendPC(msg.id)
+          toast('join', `${msg.name} entrou na sala`)
+          somEntrada()
           break
         case 'peer-left': {
+          const quemSaiu = peersRef.current[msg.id]?.name
+          if (quemSaiu) {
+            toast('leave', `${quemSaiu} saiu da sala`)
+            somSaida()
+          }
           setPeers((cur) => {
             const { [msg.id]: _gone, ...rest } = cur
             return rest
@@ -280,11 +330,17 @@ export default function Room({ name, roomCode, onLeave }) {
           closeRecv(msg.id)
           break
         }
-        case 'share-start':
+        case 'share-start': {
+          const quem = peersRef.current[msg.id]?.name
+          if (quem) {
+            toast('screen', `${quem} começou a transmitir`)
+            somTransmitindo()
+          }
           setPeers((cur) =>
             cur[msg.id] ? { ...cur, [msg.id]: { ...cur[msg.id], sharing: true } } : cur,
           )
           break
+        }
         case 'share-stop':
           setPeers((cur) =>
             cur[msg.id] ? { ...cur, [msg.id]: { ...cur[msg.id], sharing: false } } : cur,
@@ -365,32 +421,49 @@ export default function Room({ name, roomCode, onLeave }) {
   }
   const peerList = Object.entries(peers)
 
+  const TOAST_ICON = { join: IconJoin, leave: IconLeave, screen: IconScreen }
+
   return (
     <div className="room">
+      <div className="toasts">
+        {toasts.map((t) => {
+          const Ic = TOAST_ICON[t.tipo] || IconJoin
+          return (
+            <div className="toast" key={t.id}>
+              <Ic className="toast-ic" /> {t.texto}
+            </div>
+          )
+        })}
+      </div>
       <header className="topbar">
-        <div className="brand">
-          <span className="logo-emoji small">📺</span>
-          <strong>Telinha</strong>
-        </div>
+        <div className="brand">TELINHA</div>
         <button className="room-code" onClick={copyLink} title="Copiar link da sala">
-          sala <b>{room}</b> {copied ? '✓ copiado!' : '🔗'}
+          <span className="room-code-label">sala</span> <b>{room}</b>{' '}
+          {copied ? <span className="copied">copiado!</span> : <IconLink className="room-code-ic" />}
         </button>
         <div className="topbar-right">
           {myStream ? (
-            <button className="btn-danger" onClick={stopShare}>■ Parar de compartilhar</button>
+            <button className="btn-danger" onClick={stopShare}>
+              <IconStop /> Parar de compartilhar
+            </button>
           ) : (
-            <button className="btn-primary" onClick={startShare}>🖥️ Compartilhar minha tela</button>
+            <button className="btn-primary" onClick={startShare}>
+              <IconScreen /> Compartilhar minha tela
+            </button>
           )}
-          <button className="btn-ghost" onClick={onLeave}>Sair</button>
+          <button className="btn-ghost" onClick={onLeave}>
+            <IconExit /> Sair
+          </button>
         </div>
       </header>
 
       <main className={`stage ${focusId ? 'has-focus' : ''}`}>
         {tiles.length === 0 ? (
           <div className="empty-stage">
-            <p className="big">Ninguém está compartilhando ainda</p>
+            <h2 className="press-start">PRESS START</h2>
             <p>
-              Clique em <b>Compartilhar minha tela</b> lá em cima, ou espere um amigo começar.
+              Ninguém está transmitindo ainda. Clique em <b>Compartilhar minha tela</b> lá em cima,
+              ou espere um amigo começar.
               {peerList.length === 0 && (
                 <>
                   {' '}Convide a galera mandando o link da sala — é só clicar no código{' '}
@@ -415,10 +488,13 @@ export default function Room({ name, roomCode, onLeave }) {
       </main>
 
       <footer className="peerbar">
-        <span className="peer me">🟣 {name} (você){myStream ? ' · transmitindo' : ''}</span>
-        {peerList.map(([id, p]) => (
+        <span className="peer me">
+          <span className="led led-p1" /> 1UP · {name} (você){myStream ? ' · transmitindo' : ''}
+        </span>
+        {peerList.map(([id, p], i) => (
           <span key={id} className="peer">
-            🟢 {p.name}
+            <span className={`led led-${CORES_PLAYER[(i + 1) % CORES_PLAYER.length]}`} />
+            {`${i + 2}UP`} · {p.name}
             {p.sharing ? ' · transmitindo' : ''}
           </span>
         ))}

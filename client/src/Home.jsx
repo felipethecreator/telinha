@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { IconJoystick } from './icons.jsx'
 
 export default function Home({ initialCode, onEnter }) {
   const [name, setName] = useState(localStorage.getItem('telinha:nick') || '')
@@ -22,11 +23,13 @@ export default function Home({ initialCode, onEnter }) {
   return (
     <div className="home">
       <div className="home-card">
-        <div className="logo">
-          <span className="logo-emoji">📺</span>
-          <h1>Telinha</h1>
+        <div className="marquee" aria-label="Telinha">
+          <h1>TELINHA</h1>
         </div>
-        <p className="tagline">Compartilhe a tela com os amigos. Sem cadastro, direto do navegador.</p>
+        <p className="tagline">
+          <IconJoystick className="tagline-ic" /> Compartilhe a tela com os amigos. Sem cadastro,
+          direto do navegador.
+        </p>
 
         <div className="mode-switch">
           <button

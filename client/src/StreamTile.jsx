@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
+import { IconSound, IconMute, IconFull } from './icons.jsx'
 
 const CONN_MSG = {
-  connecting: '⏳ Conectando…',
-  new: '⏳ Conectando…',
-  disconnected: '📡 Conexão instável, tentando recuperar…',
-  failed: '😕 Não deu pra conectar — a rede de quem transmite (ou a sua) está bloqueando o P2P. Um servidor TURN resolve isso.',
+  connecting: 'CONECTANDO…',
+  new: 'CONECTANDO…',
+  disconnected: 'Sinal instável, tentando recuperar…',
+  failed: 'Não deu pra conectar — a rede de quem transmite (ou a sua) está bloqueando o P2P. Um servidor TURN resolve isso.',
 }
 
 export default function StreamTile({ tile, connState, focused, onFocusToggle }) {
@@ -33,6 +34,7 @@ export default function StreamTile({ tile, connState, focused, onFocusToggle }) 
   return (
     <div className={`tile ${focused ? 'focused' : ''}`} onClick={needsClick ? unlock : onFocusToggle}>
       <video ref={videoRef} autoPlay playsInline muted={muted} />
+      <span className="tile-live" aria-hidden="true">AO VIVO</span>
       {CONN_MSG[connState] && (
         <div className="tile-overlay conn">
           <span>{CONN_MSG[connState]}</span>
@@ -51,10 +53,12 @@ export default function StreamTile({ tile, connState, focused, onFocusToggle }) 
               title={muted ? 'Ativar som' : 'Mutar'}
               onClick={() => setMuted((m) => !m)}
             >
-              {muted ? '🔇' : '🔊'}
+              {muted ? <IconMute /> : <IconSound />}
             </button>
           )}
-          <button title="Tela cheia" onClick={fullscreen}>⛶</button>
+          <button title="Tela cheia" onClick={fullscreen}>
+            <IconFull />
+          </button>
         </span>
       </div>
     </div>

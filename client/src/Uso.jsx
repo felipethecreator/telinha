@@ -10,7 +10,7 @@ function diaLabel(iso) {
 }
 
 // bloco reutilizável: tile + medidor + gráfico diário de um provedor
-function Provedor({ titulo, nota, dados, marcaGB, statusChip }) {
+function Provedor({ titulo, subtitulo, nota, dados, marcaGB, statusChip }) {
   const pct = Math.min(100, (dados.totalGB / dados.gratisGB) * 100)
   const nivel = pct >= 100 ? 'critico' : pct >= 80 ? 'alerta' : 'ok'
   const maxDia = dados.dias.length ? Math.max(...dados.dias.map((d) => d.gb)) : 0
@@ -18,7 +18,10 @@ function Provedor({ titulo, nota, dados, marcaGB, statusChip }) {
 
   return (
     <section className="uso-bloco">
-      <h2 className="uso-h2">{titulo}</h2>
+      <h2 className="uso-h2">
+        {titulo}
+        {subtitulo && <span className="uso-h2-sub">{subtitulo}</span>}
+      </h2>
       <div className="uso-tile">
         <div>
           <div className="uso-numero">
@@ -34,7 +37,7 @@ function Provedor({ titulo, nota, dados, marcaGB, statusChip }) {
 
       <div className="uso-medidor" aria-label={`Consumo: ${fmt(pct)}% do limite gratuito`}>
         <div className="uso-barra">
-          <div className={`uso-fill uso-fill-${nivel}`} style={{ width: `${pct}%` }} />
+          <div className={`uso-fill uso-fill-${nivel}`} style={{ '--pct': `${pct}%` }} />
           {marcaGB && (
             <div
               className="uso-marca"
@@ -54,7 +57,7 @@ function Provedor({ titulo, nota, dados, marcaGB, statusChip }) {
       </div>
 
       {dados.dias.length === 0 ? (
-        <p className="uso-legenda">Nenhum consumo registrado este mês ainda. 🎉</p>
+        <p className="uso-legenda">Nenhum consumo registrado este mês ainda.</p>
       ) : (
         <>
           <div className="uso-chart" role="img" aria-label="Gráfico de barras do consumo diário em GB">
@@ -157,8 +160,7 @@ export default function Uso() {
       <div className="home">
         <div className="home-card">
           <div className="logo">
-            <span className="logo-emoji">📊</span>
-            <h1>Consumo</h1>
+            <h1>CONSUMO</h1>
           </div>
           <p className="tagline">Uso dos relays (TURN) da Telinha — área do dono.</p>
           <form onSubmit={login}>
@@ -186,9 +188,7 @@ export default function Uso() {
     <div className="uso">
       <header className="topbar">
         <div className="brand">
-          <span className="logo-emoji small">📺</span>
-          <strong>Telinha</strong>
-          <span className="uso-sub">/ consumo dos relays</span>
+          TELINHA <span className="uso-sub">/ consumo dos relays</span>
         </div>
         <div className="topbar-right">
           <button className="btn-ghost" onClick={() => carregar(token)} disabled={carregando}>
@@ -205,22 +205,24 @@ export default function Uso() {
           <>
             {dados.oracle && (
               <Provedor
-                titulo="🖥️ Relay principal — VM Oracle"
+                titulo="RELAY PRINCIPAL"
+                subtitulo="VM Oracle"
                 nota="todo o tráfego da VM"
                 dados={dados.oracle}
-                statusChip={<div className="uso-status uso-status-on">✅ Principal</div>}
+                statusChip={<div className="uso-status uso-status-on"><span className="led led-p4" /> Principal</div>}
               />
             )}
             {dados.cloudflare && (
               <Provedor
-                titulo="☁️ Fallback — Cloudflare"
+                titulo="FALLBACK"
+                subtitulo="Cloudflare"
                 dados={dados.cloudflare}
                 marcaGB={dados.cloudflare.limiteGB}
                 statusChip={
                   <div className={`uso-status uso-status-${dados.cloudflare.turnAtivo ? 'on' : 'off'}`}>
                     {dados.cloudflare.turnAtivo
-                      ? '✅ Disponível'
-                      : `⛔ Pausado — passou de ${fmt(dados.cloudflare.limiteGB, 0)} GB, volta mês que vem`}
+                      ? <><span className="led led-p4" /> Disponível</>
+                      : `Pausado — passou de ${fmt(dados.cloudflare.limiteGB, 0)} GB, volta mês que vem`}
                   </div>
                 }
               />
