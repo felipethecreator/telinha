@@ -212,6 +212,8 @@ h1, h2 { font-weight: 700; }
   box-shadow:
     0 14px 34px -10px rgba(255, 46, 126, 0.5),
     inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  /* a luz que o letreiro joga no painel pisca junto com o tubo */
+  animation: acende-luz 9s steps(1, end) infinite both;
 }
 
 .marquee h1 {
@@ -226,17 +228,40 @@ h1, h2 { font-weight: 700; }
     0 0 16px var(--neon),
     0 0 34px rgba(255, 46, 126, 0.75),
     0 0 60px rgba(35, 224, 255, 0.3);
-  animation: acende 1.05s steps(1, end) 1 both;
+  animation: acende 9s steps(1, end) infinite both;
 }
 
-/* o único momento coreografado: o letreiro acendendo */
+/* o único momento coreografado: o tubo de néon engasgando.
+   O ciclo dura 9s — a gaguejada leva ~0,45s e o resto do tempo fica aceso. */
 @keyframes acende {
-  0%, 14% { opacity: 0.25; }
-  16%, 22% { opacity: 1; }
-  24%, 30% { opacity: 0.3; }
-  32% { opacity: 1; }
-  36%, 40% { opacity: 0.55; }
-  42%, 100% { opacity: 1; }
+  0%, 1.6% { opacity: 0.25; }
+  1.9%, 2.6% { opacity: 1; }
+  2.8%, 3.5% { opacity: 0.3; }
+  3.7% { opacity: 1; }
+  4.2%, 4.7% { opacity: 0.55; }
+  4.9%, 100% { opacity: 1; }
+}
+
+/* mesma cadência, mas na luz derramada: sombra fraca enquanto o tubo falha */
+@keyframes acende-luz {
+  0%, 1.6% {
+    box-shadow: 0 10px 22px -12px rgba(255, 46, 126, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  }
+  1.9%, 2.6% {
+    box-shadow: 0 14px 34px -10px rgba(255, 46, 126, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  }
+  2.8%, 3.5% {
+    box-shadow: 0 10px 22px -12px rgba(255, 46, 126, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  }
+  3.7% {
+    box-shadow: 0 14px 34px -10px rgba(255, 46, 126, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  }
+  4.2%, 4.7% {
+    box-shadow: 0 12px 28px -11px rgba(255, 46, 126, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  }
+  4.9%, 100% {
+    box-shadow: 0 14px 34px -10px rgba(255, 46, 126, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.09);
+  }
 }
 
 .tagline {

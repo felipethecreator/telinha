@@ -94,7 +94,11 @@ região grande onde é literalmente uma luz (marquee) ou a ação principal (fic
 
 Uma gramática: **o que emite luz pisca; o resto não se move.**
 
-- `acende` — marquee ligando, uma vez, `steps(1, end)` (flicker de néon).
+- `acende` + `acende-luz` — o tubo de néon do marquee engasgando: ciclo de **9s**
+  em `steps(1, end)` e `infinite`, com a gaguejada durando ~0,45s (0→4,9% do ciclo) e
+  o resto do tempo aceso. As duas animações compartilham a cadência: `acende` mexe na
+  opacidade do texto, `acende-luz` na `box-shadow` do painel — quando o tubo falha, a
+  luz que ele derrama falha junto.
 - `pisca` — `PRESS START`, ponto do `AO VIVO`, `.pulse` de carregando.
 - `toast-in` / `toast-in-mobile` — entrada de aviso.
 - Transições de estado: 0.09–0.16s. `clip-path` do medidor: 0.55s.
